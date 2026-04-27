@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Java / Go Code Editor</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      height: 100vh;
+      background: #1e1e1e;
+      color: #ddd;
+      font-family: system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      height: 48px;
+      background: #252526;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      border-bottom: 1px solid #333;
+    }
+
+    header h1 {
+      font-size: 16px;
+      margin: 0;
+      margin-right: auto;
+      font-weight: 600;
+    }
+
+    button,
+    select {
+      background: #333;
+      color: #eee;
+      border: 1px solid #555;
+      padding: 6px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    button:hover,
+    select:hover {
+      background: #444;
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    #lineNumbers {
+      width: 58px;
+      background: #1a1a1a;
+      color: #777;
+      padding: 12px 8px;
+      text-align: right;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 15px;
+      line-height: 1.5;
+      overflow: hidden;
+      user-select: none;
+      border-right: 1px solid #333;
+    }
+
+    #editorWrap {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+      background: #1e1e1e;
+    }
+
+    #highlight,
+    #editor {
+      position: absolute;
+      inset: 0;
+      margin: 0;
+      padding: 12px;
+      border: none;
+      outline: none;
+      resize: none;
+
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 15px;
+      line-height: 1.5;
+      tab-size: 4;
+
+      white-space: pre;
+      overflow: auto;
+    }
+
+    #highlight {
+      color: #d4d4d4;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    #editor {
+      color: transparent;
+      background: transparent;
+      caret-color: white;
+      z-index: 2;
+    }
+
+    #editor::selection {
+      background: rgba(80, 120, 200, 0.45);
+    }
+
+    footer {
+      height: 28px;
+      background: #007acc;
+      color: white;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 0 12px;
+      font-size: 13px;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .keyword {
+      color: #c586c0;
+    }
+
+    .type {
+      color: #4fc1ff;
+    }
+
+    .string {
+      color: #ce9178;
+    }
+
+    .comment {
+      color: #6a9955;
+    }
+
+    .number {
+      color: #b5cea8;
+    }
+
+    .function {
+      color: #dcdcaa;
+    }
+
+    .variable {
+      color: #9cdcfe;
+    }
+
+    .symbol {
+      color: #d4d4d4;
+    }
+
+    .zenkaku {
+      background: rgba(255, 80, 80, 0.28);
+      border-bottom: 2px wavy #ff6b6b;
+      color: #ffb3b3;
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <h1>Java / Go Code Editor</h1>
+
+  <select id="language">
+    <option value="java">Java</option>
+    <option value="go">Go</option>
+  </select>
+
+  <button onclick="newFile()">新規</button>
+  <button onclick="openFile()">開く</button>
+  <button onclick="saveFile()">保存</button>
+
+  <input type="file" id="fileInput" accept=".java,.go,.txt">
+</header>
+
+<main>
+  <div id="lineNumbers">1</div>
+
+  <div id="editorWrap">
+    <pre id="highlight"></pre>
+    <textarea id="editor" spellcheck="false"></textarea>
+  </div>
+</main>
+
+<footer>
+  <span id="fileName">無題.java</span>
+  <span id="langStatus">Java</span>
+  <span id="cursorStatus">Ln 1, Col 1</span>
+  <span id="changeStatus">未保存</span>
+  <span id="zenkakuStatus">全角: 0</span>
+</footer>
+
+<script>
+  const editor = document.getElementById("editor");
+  const highlight = document.getElementById("highlight");
+  const lineNumbers = document.getElementById("lineNumbers");
+  const fileInput = document.getElementById("fileInput");
+  const languageSelect = document.getElementById("language");
+
+  const fileNameView = document.getElementById("fileName");
+  const langStatus = document.getElementById("langStatus");
+  const cursorStatus = document.getElementById("cursorStatus");
+  const changeStatus = document.getElementById("changeStatus");
+  const zenkakuStatus = document.getElementById("zenkakuStatus");
+
+  let fileName = "無題.java";
+  let changed = false;
+
+  const templates = {
+    java:
+`public class Main {
+    public static void main(String[] args) {
+        int count = 10;
+        String message = "Hello, Java!";
+        System.out.println(message);
+    }
+}
+`,
+    go:
+`package main
+
+import "fmt"
+
+func main() {
+    count := 10
+    message := "Hello, Go!"
+    fmt.Println(message)
+}
+`
+  };
+
+  const javaKeywords = [
+    "public", "private", "protected", "class", "static", "final",
+    "void", "if", "else", "for", "while", "do", "switch", "case",
+    "break", "continue", "return", "new", "this", "super", "extends",
+    "implements", "interface", "try", "catch", "finally", "throw",
+    "throws", "import", "package", "true", "false", "null"
+  ];
+
+  const javaTypes = [
+    "int", "long", "double", "float", "boolean", "char", "byte",
+    "short", "String", "Integer", "Long", "Double", "Float",
+    "Boolean", "Character", "ArrayList", "HashMap", "Scanner"
+  ];
+
+  const goKeywords = [
+    "package", "import", "func", "var", "const", "type", "struct",
+    "interface", "if", "else", "for", "range", "switch", "case",
+    "default", "break", "continue", "return", "go", "defer",
+    "select", "chan", "map", "true", "false", "nil"
+  ];
+
+  const goTypes = [
+    "int", "int64", "int32", "float64", "float32", "string", "bool",
+    "byte", "rune", "error", "uint", "uint64"
+  ];
+
+  editor.value = templates.java;
+  updateAll();
+
+  editor.addEventListener("input", () => {
+    changed = true;
+    updateAll();
+  });
+
+  editor.addEventListener("scroll", syncScroll);
+  editor.addEventListener("click", updateCursor);
+  editor.addEventListener("keyup", updateCursor);
+
+  editor.addEventListener("keydown", (e) => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+
+      const start = editor.selectionStart;
+      const end = editor.selectionEnd;
+
+      editor.value =
+        editor.value.substring(0, start) +
+        "    " +
+        editor.value.substring(end);
+
+      editor.selectionStart = editor.selectionEnd = start + 4;
+
+      changed = true;
+      updateAll();
+    }
+
+    if (e.ctrlKey && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      saveFile();
+    }
+  });
+
+  languageSelect.addEventListener("change", () => {
+    if (changed) {
+      const ok = confirm("現在の内容は保存されていません。テンプレートを切り替えますか？");
+      if (!ok) {
+        return;
+      }
+    }
+
+    const lang = languageSelect.value;
+    editor.value = templates[lang];
+    fileName = lang === "java" ? "無題.java" : "無題.go";
+    changed = true;
+    updateAll();
+  });
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      editor.value = reader.result;
+      fileName = file.name;
+      changed = false;
+
+      if (file.name.endsWith(".go")) {
+        languageSelect.value = "go";
+      } else if (file.name.endsWith(".java")) {
+        languageSelect.value = "java";
+      }
+
+      updateAll();
+    };
+
+    reader.readAsText(file);
+  });
+
+  function escapeHtml(text) {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function span(cls, text) {
+    return `<span class="${cls}">${text}</span>`;
+  }
+
+  function highlightCode(code) {
+    const lang = languageSelect.value;
+
+    const keywords = lang === "java" ? javaKeywords : goKeywords;
+    const types = lang === "java" ? javaTypes : goTypes;
+
+    const keywordSet = new Set(keywords);
+    const typeSet = new Set(types);
+
+    const escaped = escapeHtml(code);
+
+    const tokenRegex =
+      /([^\x00-\x7F]+|\/\/.*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b|[{}()[\].,;:+\-*/%=!<>|&]+)/g;
+
+    let result = "";
+    let lastIndex = 0;
+    let match;
+
+    while ((match = tokenRegex.exec(escaped)) !== null) {
+      const token = match[0];
+      const index = match.index;
+
+      result += escaped.slice(lastIndex, index);
+
+      const nextText = escaped.slice(tokenRegex.lastIndex);
+      const nextNonSpace = nextText.match(/^\s*(.)/);
+      const nextChar = nextNonSpace ? nextNonSpace[1] : "";
+
+      if (/^[^\x00-\x7F]+$/.test(token)) {
+        result += span("zenkaku", token);
+      } else if (token.startsWith("//") || token.startsWith("/*")) {
+        result += span("comment", token);
+      } else if (token.startsWith("\"") || token.startsWith("'")) {
+        result += span("string", token);
+      } else if (/^\d/.test(token)) {
+        result += span("number", token);
+      } else if (keywordSet.has(token)) {
+        result += span("keyword", token);
+      } else if (typeSet.has(token)) {
+        result += span("type", token);
+      } else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(token) && nextChar === "(") {
+        result += span("function", token);
+      } else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(token)) {
+        result += span("variable", token);
+      } else {
+        result += span("symbol", token);
+      }
+
+      lastIndex = tokenRegex.lastIndex;
+    }
+
+    result += escaped.slice(lastIndex);
+
+    if (result.endsWith("\n")) {
+      result += " ";
+    }
+
+    return result;
+  }
+
+  function countZenkaku() {
+    const matches = editor.value.match(/[^\x00-\x7F]/g);
+    return matches ? matches.length : 0;
+  }
+
+  function updateHighlight() {
+    highlight.innerHTML = highlightCode(editor.value);
+  }
+
+  function updateLineNumbers() {
+    const lines = editor.value.split("\n").length;
+    let numbers = "";
+
+    for (let i = 1; i <= lines; i++) {
+      numbers += i + "\n";
+    }
+
+    lineNumbers.textContent = numbers;
+  }
+
+  function updateCursor() {
+    const pos = editor.selectionStart;
+    const text = editor.value.substring(0, pos);
+    const lines = text.split("\n");
+
+    const line = lines.length;
+    const col = lines[lines.length - 1].length + 1;
+
+    cursorStatus.textContent = `Ln ${line}, Col ${col}`;
+  }
+
+  function updateStatus() {
+    const lang = languageSelect.value;
+    const zenkakuCount = countZenkaku();
+
+    fileNameView.textContent = fileName;
+    langStatus.textContent = lang === "java" ? "Java" : "Go";
+    changeStatus.textContent = changed ? "未保存" : "保存済み";
+    zenkakuStatus.textContent = `全角: ${zenkakuCount}`;
+
+    if (zenkakuCount > 0) {
+      zenkakuStatus.style.color = "#ffd0d0";
+    } else {
+      zenkakuStatus.style.color = "white";
+    }
+
+    document.title = `${changed ? "*" : ""}${fileName} - Code Editor`;
+  }
+
+  function syncScroll() {
+    highlight.scrollTop = editor.scrollTop;
+    highlight.scrollLeft = editor.scrollLeft;
+    lineNumbers.scrollTop = editor.scrollTop;
+  }
+
+  function updateAll() {
+    updateHighlight();
+    updateLineNumbers();
+    updateCursor();
+    updateStatus();
+    syncScroll();
+  }
+
+  function newFile() {
+    if (changed) {
+      const ok = confirm("保存していない変更があります。新規作成しますか？");
+      if (!ok) return;
+    }
+
+    const lang = languageSelect.value;
+    editor.value = templates[lang];
+    fileName = lang === "java" ? "無題.java" : "無題.go";
+    changed = true;
+    updateAll();
+  }
+
+  function openFile() {
+    if (changed) {
+      const ok = confirm("保存していない変更があります。ファイルを開きますか？");
+      if (!ok) return;
+    }
+
+    fileInput.value = "";
+    fileInput.click();
+  }
+
+  async function saveFile() {
+    const lang = languageSelect.value;
+
+    if (fileName.startsWith("無題")) {
+      fileName = lang === "java" ? "Main.java" : "main.go";
+    }
+
+    if ("showSaveFilePicker" in window) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: fileName,
+          types: [
+            {
+              description: lang === "java" ? "Java File" : "Go File",
+              accept: {
+                "text/plain": lang === "java" ? [".java"] : [".go"]
+              }
+            }
+          ]
+        });
+
+        const writable = await handle.createWritable();
+        await writable.write(editor.value);
+        await writable.close();
+
+        fileName = handle.name;
+        changed = false;
+        updateAll();
+        return;
+
+      } catch (err) {
+        if (err.name === "AbortError") {
+          return;
+        }
+
+        alert("保存に失敗しました。");
+        return;
+      }
+    }
+
+    const blob = new Blob([editor.value], {
+      type: "text/plain;charset=utf-8"
+    });
+
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
+    a.click();
+
+    URL.revokeObjectURL(a.href);
+
+    changed = false;
+    updateAll();
+  }
+</script>
+
+</body>
+</html>
